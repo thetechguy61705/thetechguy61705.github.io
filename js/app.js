@@ -4,13 +4,63 @@ var bot = new Discord.Client({
 	bot: true,
 	userAgent: {
 		url: 'https://github.com/SnazzyPine25/Lightcord',
-		version: '1.0.2'
+		version: '1.1.0'
 	},
 });
 DiscordClientConverter(bot);
-var converter = new showdown.Converter();
-converter.setOption('headerLevelStart', '10');
-converter.setOption('strikethrough', true);
+var MDRends = {
+	message: new marked.Renderer(),
+	embed: new marked.Renderer(),
+	embedTitle: new marked.Renderer()
+}
+marked.setOptions({
+	renderer: MDRends.message,
+	highlight: (c,l)=>hljs.highlight(l, c.trim()).value,
+	tables: false
+})
+marked.setOptions({
+	renderer: MDRends.embed,
+	highlight: (c,l)=>hljs.highlight(l, c.trim()).value,
+	tables: false
+})
+marked.setOptions({
+	renderer: MDRends.embedTitle,
+	tables: false
+})
+MDRends.message.link = (h,i,t)=>`[${t}](${h})`;
+MDRends.message.image = (h,i,t)=>`![${t}](${h})`;
+MDRends.message.hr = ()=>`---`;
+MDRends.message.heading = (t,l)=>`${"#".repeat(l)} ${t}<br>`;
+
+MDRends.embed.link = (href, title, text)=>{
+	try {
+		var prot = decodeURIComponent(unescape(href))
+		.replace(/[^\w:]/g, '')
+		.toLowerCase();
+	} catch (e) {
+		return '';
+	}
+	if (prot.indexOf('javascript:') === 0 || prot.indexOf('vbscript:') === 0) {
+		return '';
+	}
+	var out = '<a onclick="App.deploy.maskedLink(\''+href+'\')"';
+	if (title) {
+		out += ' title="' + title + '"';
+	}
+	out += '>' + text + '</a>';
+	return out;
+};
+MDRends.embed.image = (h,i,t)=>`![${t}](${this.link(h,null,h)})`;
+MDRends.embed.hr = ()=>`---`;
+MDRends.embed.heading = (t,l)=>`${"#".repeat(l)} ${t}<br>`;
+
+MDRends.embedTitle.link = (h,i,t)=>`[${t}](${h})`;
+MDRends.embedTitle.image = (h,i,t)=>`![${t}](${h})`;
+MDRends.embedTitle.hr = ()=>`---`;
+MDRends.embedTitle.paragraph = (t)=>`${t}`;
+MDRends.embedTitle.heading = (t,l)=>`${"#".repeat(l)} ${t}`;
+MDRends.embedTitle.code = (c,l)=>`\`\`\`${l}${c}\`\`\``;
+// marked('# heading+', { renderer: MDRends.message })
 var avatarHashes = [
 	"6debd47ed13483642cf09e832ed0bc1b",
 	"322c936a8c8be1b803cd94861bdfa868",
@@ -60,7 +110,7 @@ window.onmouseover = function(me){
   if($(source).attr("tooltip-bottom")){
     tt.innerText = currentTooltip.t = $(source).attr("tooltip-bottom");
     tt.className = "from-bottom";
-    tt.style = `top: ${source.getBoundingClientRect().top-32}px; left: ${source.getBoundingClientRect().left-17.5}px;`
+    tt.style = `top: ${source.getBoundingClientRect().top-32}px; left: ${source.x}px;`
     currentTooltip.e = tt;
     document.body.appendChild(tt);
   }
@@ -81,6 +131,25 @@ let App = {
 	queuedFiles: [],
 	shifting: false,
 	disableUploading: false,
+	connected: false,
+	hexToRgb: function(hex) {
+		if(hex.length > 7){hex = hex.slice(0,7-hex.length)}
+		var shorthandRegex = /^#?([a-f\d])([a-f\d])([a-f\d])$/i;
+		hex = hex.replace(shorthandRegex, function(m, r, g, b) {
+			return r + r + g + g + b + b;
+		});
+
+		var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+		return result ? {
+			r: parseInt(result[1], 16),
+			g: parseInt(result[2], 16),
+			b: parseInt(result[3], 16)
+		} : null;
+	},
+	reloadCSS: function(){
+		document.querySelector('link[href*="app.css"]').outerHTML = '<link href="appp.css" type="text/css" rel="stylesheet">'
+		document.querySelector('link[href*="appp.css"]').outerHTML = '<link href="app.css" type="text/css" rel="stylesheet">'
+	},
 	start: function(token){
 		displayHandler.showLoadingScreen();
 		if($(".landing .error")[0].outerHTML.includes("none") && token.trim() === ''){
@@ -91,97 +160,175 @@ let App = {
 		bot.login(token.trim()).catch(e=>{
 			console.error(`%c[Discord] %cFailed to login!`, 'color:#7289DA; font-weight: bold;', 'color:#000;', e);
 			displayHandler.hideLoadingScreen();
-			$(".landing .error")[0].innerText = "Invalid Token!";
+			$(".landing .error")[0].innerText = e.toString();
 			if($(".landing .error")[0].outerHTML.includes("none")){
 				$('.landing .error').fadeIn(500).delay(10000).fadeOut(500);
 			}
 		});
-		bot.once('ready', () => {
-			console.log('%c[Discord] %cConnected!', 'color:#7289DA; font-weight: bold;', 'color:#000;');
-			localStorage.token = bot.token;
-			if (!localStorage.theme) localStorage.theme = 'dark'
-			$('body').attr('class', 'theme-' + localStorage.theme)
-			$('.landing').remove();
-			$('footer').remove();
-			$('.app').remove();
+		bot.on('ready', () => {
+			if(App.connected) return;
+			try{
+				console.log('%c[Discord] %cConnected!', 'color:#7289DA; font-weight: bold;', 'color:#000;');
+				if(!bot.user.bot) {
+					bot.destroy();
+					displayHandler.hideLoadingScreen();
+					$(".landing .error")[0].innerText = "Lightcord no longer supports user accounts!";
+					if($(".landing .error")[0].outerHTML.includes("none")){
+						$('.landing .error').fadeIn(500).delay(10000).fadeOut(500);
+					}
+					return;
+				}
+				App.connected = true;
 
-			document.body.innerHTML += "<div class='flex-vertical flex-spacer'><section class='flex-horizontal flex-spacer'><div class='guilds'><div class='guild'><a draggable='false' style='background-color: rgb(46, 49, 54);' onclick='App.switchTo.DMs()' class='avatar' tooltip-left='Direct Messages'>DM</a></div><div class='guild-seperator'></div></div><div class='flex-vertical channels-wrap'><div class='flex-vertical flex-spacer'><div class='guild-header'><header><span>Loading...</span></header></div><div class='channels'></div><div class='account'></div></div></div><div class='chat flex-vertical flex-spacer'><div class='title-wrap'><div class='title'><span class='channel'>Loading...</span></div><span class='topic'>Loading...</span></div><div class='messages-container'></div><form id='message'><div class='textarea'><div class='textarea-inner'><div class='channel-textarea-upload'><div class='file-input' style='position: absolute; top: 0px; left: 0px; width: 100%; height: 100%; opacity: 0; cursor: pointer;'></div></div><textarea id='textarea' rows='1' placeholder='Chat using Botcord...' style='height: auto; overflow: hidden;'></textarea></div></div></form></div></section></div><input id='file-input' name='file' multiple type='file' style='position:absolute;width:0px;height:0px;visibility:hidden;'/>";
-			var avatar = 'https://cdn.discordapp.com/avatars/' + bot.user.id + '/' + bot.user.avatar + '.png'
-			if (bot.user.avatar === null) avatar = 'https://discordapp.com/assets/' + avatarHashes[bot.user.discriminator % avatarHashes.length] + '.png'
-			var bottag = '';
-			if (bot.user.bot) bottag = '<span class="bot-tag">BOT</span>';
-			$('.account').append('<div class="avatar-small" style="background: url(\'' + avatar + '\');background-size: 30px 30px;"></div><div class="account-details"><div class="username">' + bot.user.username + bottag + '</div><div class="discriminator">#' + bot.user.discriminator + '</div></div><div class="leave">-></div>')
+				localStorage.token = bot.token;
+				try{
+					if(!localStorage.trustedDomains || typeof JSON.parse(localStorage.trustedDomains) !== "object"){
+						localStorage.trustedDomains = "[]";
+					}
+				}catch(e){
+					console.log('%c[Lightcord] %cFailed to parse trustedDomains', 'color:#59A1EA; font-weight: bold;', 'color:#000;', e);
+					localStorage.trustedDomains = "[]";
+				}
+				if (!localStorage.theme) localStorage.theme = 'dark';
+				if (!localStorage.justStarted) localStorage.justStarted = 'true';
+				console.log('%c[Lightcord] %cUpdating document', 'color:#59A1EA; font-weight: bold;', 'color:#000;');
+				$('body').attr('class', 'theme-' + localStorage.theme)
+				$('.landing').remove();
+				$('footer').remove();
+				$('.app').remove();
 
-			App.switchTo.DMs();
-			if (!bot.user.bot){
-				bot.guilds.forEach(guild=>{
-					guildVar = '<div class="guild" data-guild="' + guild.id + '"><a draggable="false" onclick="App.switchTo.guild(\'' + guild.id + '\')" style="background-color: rgb(46, 49, 54);" class="avatar" tooltip-left="' + guild.name + '">' + guild.name.match(/\b\w/g).join('') + '</a></div>';
-					if (guild.icon) guildVar = '<div class="guild" data-guild="' + guild.id + '"><a draggable="false" onclick="App.switchTo.guild(\'' + guild.id + '\')" style="background: url(\'https://cdn.discordapp.com/icons/' + guild.id + '/' + guild.icon + '.webp\');background-size: 50px 50px;" class="avatar-small" tooltip-left="' + guild.name + '"></a></div>';
-					$('.guilds').append(guildVar);
+				console.log('%c[Lightcord] %cAdding account details', 'color:#59A1EA; font-weight: bold;', 'color:#000;');
+				document.body.innerHTML += `<div class='flex-vertical flex-spacer'><section class='flex-horizontal flex-spacer'><div class='guilds'><div class='guild'><a draggable='false' style='background-color: rgb(46, 49, 54);' onclick='App.switchTo.DMs()' class='avatar' tooltip-left='Direct Messages'>DM</a></div><div class='guild-seperator'></div></div><div class='flex-vertical channels-wrap'><div class='flex-vertical flex-spacer'><div class='guild-header'><header><span>Loading...</span></header></div><div class='channels'></div><div class="account-change-status" style="display: none;"><div class="popout-menu-item " onclick="App.changeStatus.online()"><div class="status-icon-text"><div class="status online" style="margin-right: 14px;"></div><div class="status-text">Online</div></div></div><div class="popout-menu-item " onclick="App.changeStatus.idle()"><div class="status-icon-text"><div class="status idle" style="margin-right: 14px;"></div><div class="status-text">Idle</div></div></div><div class="popout-menu-item " onclick="App.changeStatus.dnd()"><div class="status-icon-text"><div class="status dnd" style="margin-right: 14px;"></div><div class="status-text">Do Not Disturb</div></div></div><div class="popout-menu-item "><input id="status-game" placeholder="Game status..."></div><div class="popout-menu-item "><input id="status-url" placeholder="Streaming URL..."></div></div><div class='account'></div></div></div><div class='chat flex-vertical flex-spacer'><div class='title-wrap'><div class='title'><span class='channel'>Loading...</span></div><span class='topic'>Loading...</span></div><div class='messages-container'></div><form id='message'><div class='textarea'><div class='textarea-inner'><div class='channel-textarea-upload'><div class='file-input' style='position: absolute; top: 0px; left: 0px; width: 100%; height: 100%; opacity: 0; cursor: pointer;'></div></div><textarea id='textarea' rows='1' placeholder='Chat using Lightcord...' style='height: auto; overflow: hidden;'></textarea></div></div></form></div><div class='flex-vertical members-wrap'><div class='flex-vertical flex-spacer'><div class='title-space'></div><div class='members'></div></div></div></section></div><input id='file-input' name='file' multiple type='file' style='position:absolute;width:0px;height:0px;visibility:hidden;'/>`;
+				var avatar = 'https://cdn.discordapp.com/avatars/' + bot.user.id + '/' + bot.user.avatar + '.png'
+				if (bot.user.avatar === null) avatar = 'https://discordapp.com/assets/' + avatarHashes[bot.user.discriminator % avatarHashes.length] + '.png'
+				var bottag = '';
+				if (bot.user.bot) bottag = '<span class="bot-tag">BOT</span>';
+				$('.account').append('<div class="avatar-small" style="background: url(\'' + avatar + '\');background-size: 30px 30px;"><div class="status ' + (bot.user.presence.game && bot.user.presence.game.streaming ? "streaming" : bot.user.presence.status) + '"></div></div><div class="account-details"><div class="username">' + bot.user.username + bottag + '</div><div class="discriminator">#' + bot.user.discriminator + '</div></div><div class="settings" title="User Settings"></div>')
+				tippy('.account .settings', {
+					theme: 'discord',
+					position: 'top',
+					size: 'small',
+					arrow: true
 				});
-			}else{
+
+				console.log('%c[Lightcord] %cLoading DMs', 'color:#59A1EA; font-weight: bold;', 'color:#000;');
+				App.switchTo.DMs();/*
+				if (!bot.user.bot){
+					bot.guilds.forEach(guild=>{
+						guildVar = '<div class="guild" data-guild="' + guild.id + '"><a draggable="false" onclick="App.switchTo.guild(\'' + guild.id + '\')" style="background-color: rgb(46, 49, 54);" class="avatar" tooltip-left="' + guild.name + '">' + guild.name.match(/\b\w/g).join('') + '</a></div>';
+						if (guild.icon) guildVar = '<div class="guild" data-guild="' + guild.id + '"><a draggable="false" onclick="App.switchTo.guild(\'' + guild.id + '\')" style="background: url(\'https://cdn.discordapp.com/icons/' + guild.id + '/' + guild.icon + '.webp\');background-size: 50px 50px;" class="avatar-small" tooltip-left="' + guild.name + '"></a></div>';
+						$('.guilds').append(guildVar);
+					});
+				}else{*/
 				$('.guilds').remove();
-			}
-			document.onkeydown = function (e) {
-				var code = (e.keyCode ? e.keyCode : e.which)
-				if (code === 188 && e.ctrlKey) {
-					console.log('%c[Lightcord] %cQuickswitcher key combo triggered', 'color:#59A1EA; font-weight: bold;', 'color:#000;');
-					quickSwitcherOn = true;
-					App.deploy.clearModal();
-					App.deploy.quickSwitcher();
-				}
-				if(code === 27 && quickSwitcherOn){
-					quickSwitcherOn = false;
-					App.deploy.clearModal();
-				}
-				App.shifting = e.shiftKey;
-				if(e.shiftKey) $(".upload-modal-block h1").text("Insta Upload Mode!");
-			};
-			document.onkeyup = function (e) {
-				App.shifting = e.shiftKey;
-				if(!e.shiftKey) $(".upload-modal-block h1").text("Drag & Drop");
-			};/*
-			document.ondragenter = function (e) {
-				$('.upload-modal').attr('style', '');
-			};
-			document.ondragleave = function (e) {
-				$('.upload-modal').attr('style', 'display: none;');
-			};*/
+				//}
+				console.log('%c[Lightcord] %cStoring key events', 'color:#59A1EA; font-weight: bold;', 'color:#000;');
+				document.onkeydown = function (e) {
+					var code = (e.keyCode ? e.keyCode : e.which)
+					if (code === 188 && e.ctrlKey) {
+						console.debug('%c[Lightcord] %cQuickswitcher key combo triggered', 'color:#59A1EA; font-weight: bold;', 'color:#000;');
+						quickSwitcherOn = true;
+						App.deploy.clearModal();
+						App.deploy.quickSwitcher();
+					}
+					if(code === 27 && quickSwitcherOn){
+						quickSwitcherOn = false;
+						App.deploy.clearModal();
+					}
+					App.shifting = e.shiftKey;
+					if(e.shiftKey) $(".upload-modal-block h1").text("Insta Upload Mode!");
+				};
+				document.onkeyup = function (e) {
+					App.shifting = e.shiftKey;
+					if(!e.shiftKey) $(".upload-modal-block h1").text("Drag & Drop");
+				};/*
+				document.ondragenter = function (e) {
+					$('.upload-modal').attr('style', '');
+				};
+				document.ondragleave = function (e) {
+					$('.upload-modal').attr('style', 'display: none;');
+				};*/
+				$(".account-change-status input").keypress(function (e) {
+					var code = (e.keyCode ? e.keyCode : e.which);
+					if (code === 13 && !e.shiftKey) {
+						console.debug('%c[Lightcord] %cGame status is being changed with enter key', 'color:#59A1EA; font-weight: bold;', 'color:#000;');
+						App.changeStatus.game();
+					}
+				});
 
-			displayHandler.hideLoadingScreen();
+				$('.account .avatar-small').click(function() {
+					if($('.account-change-status')[0].style.display === "none"){
+						$('.account-change-status').show();
+					}else{
+						$('.account-change-status').hide();
+					}
+				});
 
-			// FileDrop
-			window.fd.logging = false;
-			var zone = new FileDrop(document.body, {zoneClass: 'with-filedrop', inputClass: '', dropEffect: 'move'});
-			zone.event('send', function (files) {
-				let instaupload = App.shifting;
-				console.debug('%c[FileDrop] %cRetrieved files.', 'color:#c4e8f7; font-weight: bold;', 'color:#000;', files);
-				if(App.disableUploading) return;
-				files.each((file,n) => {
-					console.debug('%c[FileDrop] %cData for file ' + file.name + '.', 'color:#c4e8f7; font-weight: bold;', 'color:#000;', file);
-					file.readDataURL(url=>{
-						console.debug('%c[FileDrop] %cSending file to queue ' + file.name + '.', 'color:#c4e8f7; font-weight: bold;', 'color:#000;', {file:file.nativeFile,url:url,name:file.name,type:file.type,size:file.size});
-						App.queuedFiles.push({file:file.nativeFile,url:url,name:file.name,type:file.type,size:file.size});
-						if(files.reverse()[0] === file) App.filePrompt.dropped(instaupload);
-					},err=>{
-						console.debug('%c[FileDrop] %cFailed to get Data URL for file ' + file.name + '.', 'color:#c4e8f7; font-weight: bold;', 'color:#000;', err);
-						if(files.reverse()[0] === file) App.filePrompt.dropped(instaupload);
+				if(bot.user.presence.game){
+					$('#status-game').val(bot.user.presence.game.name);
+					$('#status-url').val(bot.user.presence.game.url);
+				};
+
+				if(localStorage.justStarted === "true"){
+					localStorage.justStarted = "false";
+					$('<div class="lightcord-tip"><h4>Searching for stuff</h4><p>To go to guilds and private messages, press <key>Ctrl</key> <key>,</key> to open the Quickswitcher.</p><button class="close" onclick="$(this.parentNode).remove()"></button></div>').insertAfter('.guild-header')
+				}
+
+				displayHandler.hideLoadingScreen();
+
+				// FileDrop
+				console.log('%c[Lightcord] %cStarting FileDrop', 'color:#59A1EA; font-weight: bold;', 'color:#000;');
+				window.fd.logging = false;
+				var zone = new FileDrop(document.body, {zoneClass: 'with-filedrop', inputClass: '', dropEffect: 'move'});
+				zone.event('send', function (files) {
+					let instaupload = App.shifting;
+					console.debug('%c[FileDrop] %cRetrieved files.', 'color:#c4e8f7; font-weight: bold;', 'color:#000;', files);
+					if(App.disableUploading) return;
+					files.each((file,n) => {
+						console.debug('%c[FileDrop] %cData for file ' + file.name + '.', 'color:#c4e8f7; font-weight: bold;', 'color:#000;', file);
+						file.readDataURL(url=>{
+							console.debug('%c[FileDrop] %cSending file to queue ' + file.name + '.', 'color:#c4e8f7; font-weight: bold;', 'color:#000;', {file:file.nativeFile,url:url,name:file.name,type:file.type,size:file.size});
+							App.queuedFiles.push({file:file.nativeFile,url:url,name:file.name,type:file.type,size:file.size});
+							if(files.reverse()[0] === file) App.filePrompt.dropped(instaupload);
+						},err=>{
+							console.debug('%c[FileDrop] %cFailed to get Data URL for file ' + file.name + '.', 'color:#c4e8f7; font-weight: bold;', 'color:#000;', err);
+							if(files.reverse()[0] === file) App.filePrompt.dropped(instaupload);
+						})
 					})
-				})
-			});
-			zone.event('dragEnter',()=>{
-				$('.upload-modal').attr('style', '');
-			});
-			zone.event('dragLeave',()=>{
-				$('.upload-modal').attr('style', 'display: none;');
-			});
+				});
+				zone.event('dragEnter',()=>{
+					$('.upload-modal').attr('style', '');
+				});
+				zone.event('dragLeave',()=>{
+					$('.upload-modal').attr('style', 'display: none;');
+				});
+			}catch(e){
+				console.error('%c[Lightcord] %cError', 'color:#59A1EA; font-weight: bold;', 'color:#000;', e);
+			}
+		});
+		bot.on('error', (error) => {
+			console.error('%c[Discord] %cError.', 'color:#7289DA; font-weight: bold;', 'color:#000;', error);
+		});
+		bot.on("warn", (str) => {
+			console.warn('%c[Discord] %cWarned.', 'color:#7289DA; font-weight: bold;', 'color:#000;', str);
+		});
+		bot.on("disconnected", function(){
+			console.warn('%c[Discord] %cDisconnected.', 'color:#7289DA; font-weight: bold;', 'color:#000;');
+			App.connected = false;
+		});
+		bot.on("debug", function(str){
+			console.debug('%c[Discord]', 'color:#7289DA; font-weight: bold;', str);
+		});
+		bot.on("reconnecting", () => {
+			console.warn('%c[Discord] %cReconnecting.', 'color:#7289DA; font-weight: bold;', 'color:#000;');
+		});
+		bot.on("resume", (events) => {
+			console.warn('%c[Discord] %cResumed connection. ' + events + ' events replayed.', 'color:#7289DA; font-weight: bold;', 'color:#000;');
 		});
 		bot.on('message', (message) => {
-			console.debug('%c[Discord] %cCaught event: message', 'color:#7289DA; font-weight: bold;', 'color:#000;');
 			App.payloadManager.messageCreate(message);
 		});
 		bot.on('messageDelete', (message) => {
-			console.debug('%c[Discord] %cCaught event: messageDelete', 'color:#7289DA; font-weight: bold;', 'color:#000;');
 			App.payloadManager.messageDelete(message);
 		});
 		bot.on('guildCreate', (guild) => {
@@ -193,15 +340,17 @@ let App = {
 		});
 		bot.on('guildDelete', (guild) => {
 			console.debug('%c[Discord] %cCaught event: guildDelete', 'color:#7289DA; font-weight: bold;', 'color:#000;');
-			if(activeGuild === guild.id) App.switchTo.friends();
+			if(activeGuild === guild.id) App.switchTo.DMs();
 			if (bot.user.bot) return;
 			$('.guild [data-guild*="' + guild.id + '"]').delete();
 		});
 		bot.on('presenceUpdate', (oldmember, newmember) => {
-			console.debug('%c[Discord] %cCaught event: presenceUpdate', 'color:#7289DA; font-weight: bold;', 'color:#000;');
-			if(activeGuild === 'dm' && bot.channels.filter(c=>c.type==="dm").map(dm=>dm.recipient.id===oldmember.user.id).includes(true)) App.switchTo.DMs(true);
+			App.payloadManager.updateUser(newmember, "presence");
 		});
-		window.onclose = ()=>{
+		bot.on('userUpdate', (oldmember, newmember) => {
+			App.payloadManager.updateUser(newmember, "user");
+		});
+		window.onclose = window.onunload = ()=>{
 			console.debug('%c[Discord] %cDisconnecting...', 'color:#7289DA; font-weight: bold;', 'color:#000;');
 			bot.destroy();
 		}
@@ -237,20 +386,33 @@ let App = {
 				msg.content = '<p><span class="username" ' + color + '>' + name + '</span> pinned a message to this channel. <strong>See all the pins.</strong> <span data-timestamp="' + msg.createdTimestamp + '" class="timestamp">' + moment(msg.createdTimestamp).calendar() + '</span><p>'
 				var parsedMsg = $('<div class="msg-group" style="padding: 15px 0;">').append('<div class="message"><div class="comment" data-uid="' + msg.author.id + '" style="margin-left: 20px;"><div class="message-text"><span data-id="' + msg.id + '" class="markup">' + msg.content + '</span></div></div></div></div>')
 				return $('.messages-container').append(parsedMsg)
-			} else var parsedMsg = $('<div class="msg-group">').append('<div class="message"><div class="avatar-large" tooltip-bottom="View Profile" style="background-image: url(\'' + avatar + '\');"></div><div class="comment" data-uid="' + msg.author.id + '"><h2><span class="username-wrap">' + username + '</strong></span><span data-timestamp="' + msg.createdTimestamp + '" class="timestamp">' + moment(msg.createdTimestamp).calendar() + '</span></h2><div class="message-text"><span data-id="' + msg.id + '" class="markup">' + converter.makeHtml(App.payloadManager.messageEmbed(msg)) + '</span></div></div></div></div>')
+			} else var parsedMsg = $('<div class="msg-group">').append('<div class="message"><div class="avatar-large" style="background-image: url(\'' + avatar + '\');"></div><div class="comment" data-uid="' + msg.author.id + '"><h2><span class="username-wrap">' + username + '</strong></span><span data-timestamp="' + msg.createdTimestamp + '" class="timestamp">' + moment(msg.createdTimestamp).calendar() + '</span></h2><div class="message-text"><span data-id="' + msg.id + '" class="markup">' + App.payloadManager.messageEmbed(msg) + '</span></div></div></div></div>')
+			//} else var parsedMsg = $('<div class="msg-group">').append('<div class="message"><div class="avatar-large" style="background-image: url(\'' + avatar + '\');"></div><div class="comment" data-uid="' + msg.author.id + '"><h2><span class="username-wrap">' + username + '</strong></span><span data-timestamp="' + msg.createdTimestamp + '" class="timestamp">' + moment(msg.createdTimestamp).calendar() + '</span></h2><div class="message-text"><span data-id="' + msg.id + '" class="markup">' + converter.makeHtml(App.payloadManager.messageEmbed(msg)) + '</span></div></div></div></div>')
 			var d = $(document.querySelector('[data-uid="' + msg.author.id + '"]')).parents()
 			if (d[2] !== undefined) {
 				var day = moment(msg.createdTimestamp).format('hh-DDMMYY').split('-')
 				var lastTimestamp = moment(parseInt(d[2].lastChild.firstChild.lastChild.firstChild.lastChild.dataset.timestamp)).format('hh-DDMMYY').split('-')
 				if (d[2].lastChild.firstChild.lastChild.dataset.uid === msg.author.id && day[0] === lastTimestamp[0] && day[1] === lastTimestamp[1]) {
-					$(d[2].lastChild.firstChild.lastChild.lastChild).append('<span data-id="' + msg.id + '" class="markup">' + converter.makeHtml(App.payloadManager.messageEmbed(msg)) + '</span>')
+					$(d[2].lastChild.firstChild.lastChild.lastChild).append('<span data-id="' + msg.id + '" class="markup">' + App.payloadManager.messageEmbed(msg) + '</span>')
+					// $(d[2].lastChild.firstChild.lastChild.lastChild).append('<span data-id="' + msg.id + '" class="markup">' + converter.makeHtml(App.payloadManager.messageEmbed(msg)) + '</span>')
 					return $('.messages-container').scrollTop($('.messages-container').scrollTop() + $('.chat').children()[1].lastChild.lastChild.lastChild.clientHeight + 10)
 				} else return $('.messages-container').append(parsedMsg)
 			}
 			if (d[2] === undefined) {
 				$('.messages-container').append(parsedMsg)
-				return $('.messages-container').scrollTop($('.messages-container').scrollTop() + $('.chat').children()[1].lastChild.clientHeight)
+				$(`.messages-container [data-id="${msg.id}"]`).ready(function() {
+					$('pre code').each(function(i, block) {
+						hljs.highlightBlock(block);
+					});
+				});
 			}
+			$('.messages-container').scrollTop($('.messages-container').scrollTop() + $('.chat').children()[1].lastChild.clientHeight)
+			tippy('.emoji', {
+				theme: 'discord',
+				position: 'top',
+				size: 'small',
+				arrow: true
+			});
 		},
 		messageEmbed: function(msg) {
 			var edit = ''
@@ -263,101 +425,109 @@ let App = {
 			}
 			if (msg.editedTimestamp !== null) edit = '<span class="edited">(edited)</span>'
 			if (msg.embeds[0] !== undefined) {
-				if (msg.embeds[0].thumbnail) {
-					var dimensions = calculateAspectRatioFit(msg.embeds[0].thumbnail.width, msg.embeds[0].thumbnail.height, 400, 600)
-					if (msg.embeds[0].thumbnail.width < 400) msg.embeds[0].thumbnail.width = Math.round(msg.embeds[0].thumbnail.width / 1.035)
-					else msg.embeds[0].thumbnail.width = dimensions.width
-				}
-				var provider = ''
-				if (msg.embeds[0].provider) provider = '<div class="embed-provider">' + msg.embeds[0].provider.name + '</div>'
-				if (msg.embeds[0].type === 'image') attachEnd = attachEnd + '<div class="embed"><img src="' + msg.embeds[0].thumbnail.proxyURL + '" href="' + msg.embeds[0].thumbnail.url + '"></div>'
-				if (msg.embeds[0].type === 'video') attachEnd = attachEnd + '<div class="embed"><img src="' + msg.embeds[0].thumbnail.proxyURL + '" href="' + msg.embeds[0].thumbnail.url + '" width="' + msg.embeds[0].thumbnail.width +  '" height="' + msg.embeds[0].thumbnail.height +  '"></div>'
-				if (msg.embeds[0].type === 'link') {
-					if (msg.embeds[0].description)attachEnd = attachEnd + '<div class="embed"><div class="embed-description">' + msg.embeds[0].description + '</div></div>'
-				}
-				if (msg.embeds[0].type === 'article') {
-					if (msg.embeds[0].description) attachEnd = attachEnd + '<div class="embed">' + provider + '<div class="embed-description">' + msg.embeds[0].description + '</div></div>'
-				}
-				if (msg.embeds[0].type === 'rich') {
-					var embData = [];
-					if (msg.embeds[0].author) {
-						embData.push('<div>')
-						if (msg.embeds[0].author.icon_url) embData.push('<img class="embed-author-icon" src="' + msg.embeds[0].author.icon_url + '"/>')
-						if (msg.embeds[0].author.name) embData.push('<a class="embed-author" target="_blank" rel="noreferrer">' + msg.embeds[0].author.name + '</a>')
+				msg.embeds.map(embed=>{
+					if (embed.thumbnail) {
+						var dimensions = calculateAspectRatioFit(embed.thumbnail.width, embed.thumbnail.height, 400, 600)
+						if (embed.thumbnail.width < 400) embed.thumbnail.width = Math.round(embed.thumbnail.width / 1.035)
+						else embed.thumbnail.width = dimensions.width
+					}
+					var provider = ''
+					if (embed.provider) provider = '<div class="embed-provider">' + embed.provider.name + '</div>'
+					if (embed.type === 'image') attachEnd = attachEnd + (msg.embeds.indexOf(embed)!==0 ? '<br>' : '') + '<div class="embed"><img src="' + embed.thumbnail.proxyURL + '" href="' + embed.thumbnail.url + '"></div>'
+					if (embed.type === 'video') attachEnd = attachEnd + (msg.embeds.indexOf(embed)!==0 ? '<br>' : '') + '<div class="embed"><img src="' + embed.thumbnail.proxyURL + '" href="' + embed.thumbnail.url + '" width="' + embed.thumbnail.width +  '" height="' + embed.thumbnail.height +  '"></div>'
+					/*if (embed.type === 'link') {
+						if (embed.description)attachEnd = attachEnd + (msg.embeds.indexOf(embed)!==0 ? '<br>' : '') + '<div class="embed"><div class="embed-description">' + embed.description + '</div></div>'
+					}
+					if (embed.type === 'article') {
+						if (embed.description) attachEnd = attachEnd + (msg.embeds.indexOf(embed)!==0 ? '<br>' : '') + '<div class="embed">' + provider + '<div class="embed-description">' + embed.description + '</div></div>'
+					}*/
+					if (embed.type === 'rich' || embed.type === 'link' || embed.type === 'article') {
+						var embData = [];
+						if (embed.author) {
+							embData.push('<div>')
+							if (embed.author.iconURL) embData.push('<img class="embed-author-icon" src="' + embed.author.iconURL + '"/>')
+							if (embed.author.name) embData.push('<a class="embed-author"  onclick="App.deploy.maskedLink(\''+(embed.author.url ? embed.author.url : '')+'\')">' + embed.author.name + '</a>')
+								embData.push('</div>')
+						}
+						if (embed.title) embData.push('<div><a class="embed-title" onclick="App.deploy.maskedLink(\''+(embed.url ? embed.url : '')+'\')">' + App.payloadManager.parseTwemoji(marked(embed.title, { renderer: MDRends.embedTitle })) + '</a></div>')
+						if (embed.description) embData.push('<div class="embed-description markup">'+ App.payloadManager.parseDiscord(marked(embed.description, { renderer: MDRends.embed }), msg) + '</div>')
+						if (embed.fields) embData.push('<div class="embed-fields">')
+						for (var i in embed.fields) {
+							var inline = ''
+							if (embed.fields[i].inline) inline = '-inline'
+							embData.push('<div class="embed-field embed-field' + inline + '"><div class="embed-field-name">' + App.payloadManager.parseTwemoji(marked(embed.fields[i].name, { renderer: MDRends.embedTitle })) + '</div><div class="embed-field-value markup">' + App.payloadManager.parseDiscord(marked(embed.fields[i].value, { renderer: MDRends.embed }), msg) + '</div></div>')
+						}
+						if (embed.fields) embData.push('</div>')
+						if (embed.footer) {
+							embData.push('<div>')
+							if (embed.footer.icon_url) embData.push('<img class="embed-footer-icon" src="' + embed.footer.icon_url + '"/>')
+							if (embed.footer.text) embData.push('<span class="embed-footer">' + embed.footer.text.replace(/\n+/ig, '<br>') + '</span>')
 							embData.push('</div>')
+						}
+						attachEnd = attachEnd + (msg.embeds.indexOf(embed)!==0 ? '<br>' : '') + '<div class="embed" ' + (embed.color ? 'style="border-left-color: #' + embed.color.toString(16) + '"' : '') + '>' + embData.join('') + '</div>'
 					}
-					if (msg.embeds[0].title) embData.push('<div><a class="embed-title" target="_blank" rel="noreferrer">' + App.payloadManager.parseTwemoji(msg.embeds[0].title) + '</a></div>')
-					if (msg.embeds[0].description) embData.push('<div class="embed-description markup">'+ App.payloadManager.parseTwemoji(converter.makeHtml(msg.embeds[0].description.replace(/>/ig, '&gt;').replace(/</ig, '&lt;').replace(/-/ig, '&#45;').replace(/\+/ig, '&#45;'))) + '</div>')
-					if (msg.embeds[0].fields) embData.push('<div class="embed-fields">')
-					for (var i in msg.embeds[0].fields) {
-						var inline = ''
-						if (msg.embeds[0].fields[i].inline) inline = '-inline'
-						embData.push('<div class="embed-field embed-field' + inline + '"><div class="embed-field-name">' + App.payloadManager.parseTwemoji(msg.embeds[0].fields[i].name) + '</div><div class="embed-field-value markup">' + msg.embeds[0].fields[i].value.replace(/\-/ig, '&#45;').replace(/\+/ig, '&#45;').replace(/</, '&lt;').replace(/>/, '&gt;').replace(/\n+/ig, '<br>').replace(/https?:\/\/[\S]*/ig, function (m, r) {return m.replace(m, '<a href="' + m + '">' + m + '</a>')}).replace(/[\s\S]+/, function (m) {return twemoji.parse(m)}) + '</div></div>')
-					}
-					if (msg.embeds[0].fields) embData.push('</div>')
-					if (msg.embeds[0].footer) {
-						embData.push('<div>')
-						if (msg.embeds[0].footer.icon_url) embData.push('<img class="embed-footer-icon" src="' + msg.embeds[0].footer.icon_url + '"/>')
-						if (msg.embeds[0].footer.text) embData.push('<span class="embed-footer">' + msg.embeds[0].footer.text.replace(/\n+/ig, '<br>') + '</span>')
-						embData.push('</div>')
-					}
-					attachEnd = attachEnd + '<div class="embed" style="border-left-color: #' + msg.embeds[0].color.toString(16) + '">' + embData.join('') + '</div>'
-				}
+				});
 			}
 			if (msg.attachments.array()[0] !== undefined) {
-				if (msg.attachments.array()[0].width) {
-					var dimensions = calculateAspectRatioFit(msg.attachments.array()[0].width, msg.attachments.array()[0].height, 400, 600)
-					var width = dimensions.width
-					if (msg.attachments.array()[0].width < 400) width = Math.round(msg.attachments.array()[0].width / 1.035)
-					attachEnd += '<img src="' + msg.attachments.array()[0].proxyURL + '" href="' + msg.attachments.array()[0].url + '" alt="' + msg.attachments.array()[0].filename + '" width="' + width + '" height="auto"/>'
-				} else {
-					function humanFileSize (size) {
-					if (size === 0) return '0 bytes'
-						var i = Math.floor( Math.log(size) / Math.log(1024) );
-						return ( size / Math.pow(1024, i) ).toFixed(2) * 1 + ' ' + ['bytes', 'kB', 'MB', 'GB', 'TB'][i];
+				msg.attachments.array().map(attachment=>{
+					if (attachment.width) {
+						var dimensions = calculateAspectRatioFit(attachment.width, attachment.height, 400, 600)
+						var width = dimensions.width
+						if (attachment.width < 400) width = Math.round(attachment.width / 1.035)
+						attachEnd += '<img src="' + attachment.proxyURL + '" href="' + attachment.url + '" alt="' + attachment.filename + '" width="' + width + '" height="auto"/>'
+					} else {
+						function humanFileSize (size) {
+						if (size === 0) return '0 bytes'
+							var i = Math.floor( Math.log(size) / Math.log(1024) );
+							return ( size / Math.pow(1024, i) ).toFixed(2) * 1 + ' ' + ['bytes', 'kB', 'MB', 'GB', 'TB'][i];
+						}
+						attachEnd += '<div class="attachment"><div class="icon icon-file ' + 
+						(attachment.filename.startsWith('.txt') || attachment.filename.startsWith('.doc') || attachment.filename.startsWith('.rtf') ? 'document' : '')
+						 +'"></div><a href="' + attachment.url + '" target="_blank" rel="noreferrer">' + attachment.filename + '</a><div class="metadata">' + humanFileSize(attachment.filesize) + '</div></div>'
 					}
-					attachEnd += '<div class="attachment"><div class="icon icon-file document"></div><a href="' + msg.attachments.array()[0].url + '" target="_blank" rel="noreferrer">' + msg.attachments.array()[0].filename + '</a><div class="metadata">' + humanFileSize(msg.attachments.array()[0].size) + '</div></div>'
-				}
+				});
 			}
 			var regex = new RegExp(/&lt;@!?(\d+)&gt;/ig)
 			var ghCodeblock = new RegExp(/```[\s\S]*```/g).exec(msg.content)
 			var codeblock = new RegExp(/`[\s\S]*`/g).exec(msg.content)
 			var i = 0
 			var j = 0
-			return App.payloadManager.parseEmoji(msg.content).replace(/#/g, '&#35;').replace(/-/g, '&#45;').replace(/>/g, '&gt;').replace(/</g, '&lt;').replace(/\[/ig, '&#91;').replace(/\(/ig, '&#40;').replace(/\./ig, '&#46;').replace(/\+/ig, '&#43;').replace(regex, function (m, r) {
-				m = m.replace(/&gt;/ig, '>').replace(/&lt;/ig, '<')
+			return App.payloadManager.parseOnlyEmoji(marked(msg.content.replace(/#/g, '&#35;').replace(/-/g, '&#45;').replace(/>/g, '&gt;').replace(/</g, '&lt;').replace(/\[/ig, '&#91;').replace(/\(/ig, '&#40;').replace(/\./ig, '&#46;').replace(/\+/ig, '&#43;').replace(regex, function (m, r) {
+				m = m.replace(/&gt;/ig, '>').replace(/&lt;/ig, '<').replace(/&lt;/ig, '<')
 				if (msg.type !== 6 && msg.mentions[i] === undefined && r !== 0 && m.startsWith('<@')) {
 					i++
 					if (msg.mentions[i] === undefined) {
-						if (bot.users.has(m.substr(2, m.length - 3))) m = m.replace(m, '<span class="mention">@' + bot.users.get(m.substr(2, m.length - 3)).username + '</span>')
+						if (bot.users.has(m.substr(2, m.length - 3))) m = m.replace(m, '<span class="mention">@' + (msg.guild && msg.guild.members.get(m.substr(2, m.length - 3)) ? msg.guild.members.get(m.substr(2, m.length - 3)).displayName : bot.users.get(m.substr(2, m.length - 3)).username) + '</span>')
 						else m = m.replace(m, '<span class="mention">' + m + '</span>')
 					}
 					if (msg.mentions[i] !== undefined) {
-						if (msg.type === 6) m = m.replace(m, msg.mentions[i].username)
-						if (msg.type !== 6) m = m.replace(m, '<span class="mention">@' + msg.mentions[i].username + '</span>')
+						if (msg.type === 6) m = m.replace(m, msg.guild.members.get(msg.mentions[i].id).displayName)
+						if (msg.type !== 6) m = m.replace(m, '<span class="mention">@' + msg.guild.members.get(msg.mentions[i].id).displayName + '</span>')
 					}
 				}
-				if (msg.type === 6 && msg.mentions[i] !== undefined) m = m.replace(m, '<span class="username">' + msg.mentions[i].username + '</span>')
-				if (msg.type !== 6 && msg.mentions[i] !== undefined) m = m.replace(m, '<span class="mention">@' + msg.mentions[i].username + '</span>')
+				if (msg.type === 6 && msg.mentions[i] !== undefined) m = m.replace(m, '<span class="username">' + msg.guild.members.get(msg.mentions[i].id).displayName + '</span>')
+				if (msg.type !== 6 && msg.mentions[i] !== undefined) m = m.replace(m, '<span class="mention">@' + msg.guild.members.get(msg.mentions[i].id).displayName + '</span>')
 				return m
-			}).replace(/@everyone/ig, '<span class="mention">@everyone</span>').replace(/@here/ig, '<span class="mention">@here</span>').replace(/https?:\/\/[\S]*/ig, function (m, r) {
-				return m.replace(m, '<a href="' + m + '">' + m + '</a>')
-			}).replace(/&lt;&#35;(\d+)&gt;/g, function (m, r) {
+			}).replace(/@everyone/ig, '<span class="mention">@everyone</span>')
+			.replace(/@here/ig, '<span class="mention">@here</span>')
+			.replace(/&lt;&#35;(\d+)&gt;/g, function (m, r) {
 				var channel = '&#35;deleted-channel'
 				if (bot.channels.get(r) !== undefined) channel = '<span class="mention">&#35;' + bot.channels.get(r).name + '</span>'
 				m = m.replace(m, channel)
 				return m
 			}).replace(/(?:\\)?(?:&lt;){1,2}:[0-9a-z--_]+:(\d+)&gt;(?:\d+)?(?:&gt;)?/ig, function (m, r) {
+				console.log(m,r);
 				if (m.includes('\\')) return m.replace(m, m.substr(1))
-				return m.replace(m, '<img class="emoji" src="https://cdn.discordapp.com/emojis/' + r + '.png"/>')
-			}).replace(/[\s\S]+/ig, function (m, r) {
-				return twemoji.parse(m, {
-					folder: 'svg',
-					ext: '.svg'
-				})
+				return m.replace(m, `<img class="emoji" title="&colon;${m.replace(/&lt;:(.+):\d+&gt;/g, "$1")}&colon;" src="https://cdn.discordapp.com/emojis/${r}.png"/>`)
+			}).replace(/&lt;@&amp;([0-9]+)&gt;/g, function (m, r) {
+				var role = '@deleted-role'
+				var rsel = msg.mentions.roles.get(r);
+				if (rsel !== undefined) role = `<component class="mention"${rsel.color !== 0 ? `style="color: ${rsel.hexColor}; background-color: rgba(${App.hexToRgb(rsel.color).r}, ${App.hexToRgb(rsel.color).g}, ${App.hexToRgb(rsel.color).b}, 0.0980392); border: none;"` : ""}>@${rsel.name}</component>`
+				m = m.replace(m, role)
+				return m
 			}).replace(/`[\s\S]*`/g, codeblock).replace(/```[\s\S]*```/g, function (m) {
 				return ghCodeblock[0].replace(/```([\S]+)/g, '```$1\n').replace(/([\s\S]+)```/g, '$1\n```')
-			}) + edit + attachEnd;
+			}), { renderer: MDRends.message })) + edit + attachEnd;
 		},
 		messageDelete: function(msg){
 			if(msg.channel.id !== activeChannel) return;
@@ -372,7 +542,7 @@ let App = {
 			if(msg.channel.id !== activeChannel) return;
 			var d = $(document.querySelector('[data-id="' + msg.id + '"]'))
 			if (d[0]) {
-				d[0].innerHTML = converter.makeHtml(App.payloadManager.messageEmbed(msg))
+				d[0].innerHTML = App.payloadManager.messageEmbed(msg)
 			}
 		},
 		parseEmoji: function(content){
@@ -387,10 +557,65 @@ let App = {
 			}
 			return content;
 		},
+		parseOnlyEmoji: function(content){
+			if(content.match(/:(\w+):/g)){
+				content.match(/:(\w+):/g).map(pe => {
+					emojiData.map(e => {
+						if(e.aliases.includes(pe.replace(/:/g, ""))){
+							let per = twemoji.parse(e.emoji, {
+								folder: 'svg',
+								ext: '.svg'
+							}).replace('"false"', `"false" title="&colon;${pe.replace(/:/g, "")}&colon;"`);
+							content = content.replace(pe, per);
+						}
+					})
+				})
+			}
+			return content;
+		},
 		parseTwemoji: function(content){
 			return twemoji.parse(App.payloadManager.parseEmoji(content), {
 				folder: 'svg',
 				ext: '.svg'
+			})
+		},
+		parseDiscord: function(content, msg){
+			var regex = new RegExp(/&lt;@!?(\d+)&gt;/ig)
+			var ghCodeblock = new RegExp(/```[\s\S]*```/g).exec(msg.content)
+			var codeblock = new RegExp(/`[\s\S]*`/g).exec(msg.content)
+			return App.payloadManager.parseOnlyEmoji(content).replace(regex, function (m, r) {
+				m = m.replace(/&gt;/ig, '>').replace(/&lt;/ig, '<').replace(/&lt;/ig, '<')
+				if (msg.type !== 6 && msg.mentions[i] === undefined && r !== 0 && m.startsWith('<@')) {
+					i++
+					if (msg.mentions[i] === undefined) {
+						if (bot.users.has(m.substr(2, m.length - 3))) m = m.replace(m, '<span class="mention">@' + (msg.guild && msg.guild.members.get(m.substr(2, m.length - 3)) ? msg.guild.members.get(m.substr(2, m.length - 3)).displayName : bot.users.get(m.substr(2, m.length - 3)).username) + '</span>')
+						else m = m.replace(m, '<span class="mention">' + m + '</span>')
+					}
+					if (msg.mentions[i] !== undefined) {
+						if (msg.type === 6) m = m.replace(m, msg.guild.members.get(msg.mentions[i].id).displayName)
+						if (msg.type !== 6) m = m.replace(m, '<span class="mention">@' + msg.guild.members.get(msg.mentions[i].id).displayName + '</span>')
+					}
+				}
+				if (msg.type === 6 && msg.mentions[i] !== undefined) m = m.replace(m, '<span class="username">' + msg.guild.members.get(msg.mentions[i].id).displayName + '</span>')
+				if (msg.type !== 6 && msg.mentions[i] !== undefined) m = m.replace(m, '<span class="mention">@' + msg.guild.members.get(msg.mentions[i].id).displayName + '</span>')
+				return m
+			}).replace(/@everyone/ig, '<span class="mention">@everyone</span>')
+			.replace(/@here/ig, '<span class="mention">@here</span>')
+			.replace(/&lt;&#35;(\d+)&gt;/g, function (m, r) {
+				var channel = '&#35;deleted-channel'
+				if (bot.channels.get(r) !== undefined) channel = '<span class="mention">&#35;' + bot.channels.get(r).name + '</span>'
+				m = m.replace(m, channel)
+				return m
+			}).replace(/(?:\\)?(?:&lt;){1,2}:[0-9a-z--_]+:(\d+)&gt;(?:\d+)?(?:&gt;)?/ig, function (m, r) {
+				console.log(m,r);
+				if (m.includes('\\')) return m.replace(m, m.substr(1))
+				return m.replace(m, `<img class="emoji" title="&colon;${m.replace(/&lt;:(.+):\d+&gt;/g, "$1")}&colon;" src="https://cdn.discordapp.com/emojis/${r}.png"/>`)
+			}).replace(/&lt;@&amp;([0-9]+)&gt;/g, function (m, r) {
+				var role = '@deleted-role'
+				var rsel = msg.mentions.roles.get(r);
+				if (rsel !== undefined) role = `<component class="mention"${rsel.color !== 0 ? `style="color: ${rsel.hexColor}; background-color: rgba(${App.hexToRgb(rsel.color).r}, ${App.hexToRgb(rsel.color).g}, ${App.hexToRgb(rsel.color).b}, 0.0980392); border: none;"` : ""}>@${rsel.name}</component>`
+				m = m.replace(m, role)
+				return m
 			})
 		},
 		handleCommand: function(input, channel) {
@@ -422,6 +647,9 @@ let App = {
 			if (command === '/unflip') {
 				bot.channels.get(channel).sendMessage(suffix + ' ┬─┬﻿ ノ( ゜-゜ノ)')
 			}
+			if (command === '/shrug') {
+				bot.channels.get(channel).sendMessage(suffix + '¯\\_(ツ)_/¯')
+			}
 			if (command === '/theme') {
 				var themes = ['dark', 'light']
 				var val = themes.indexOf(localStorage.theme)
@@ -438,6 +666,69 @@ let App = {
 			user.deleteDM().then((r) => {
 				App.switchTo.DMs(true);
 				if(activeChannel === cid) App.switchTo.DMs();
+			});
+		},
+		updateUser: function(newmember, type){
+			let member = null;
+			if(bot.guilds.get(activeGuild)){
+				member = bot.guilds.get(activeGuild).members.get(newmember.id);
+			}
+			var users = $('.channels').children()
+			for (var a in users) {
+				if (users[a].childNodes !== undefined) {
+					if (users[a].childNodes[0].dataset.dmuid === newmember.id) {
+						if (newmember.presence.game && !$(users[a].childNodes[0].childNodes[newmember.bot ? 2 : 1].childNodes[1]).html().includes(`<strong>`)) $(users[a].childNodes[0].childNodes[1].childNodes[1]).append('<span>' + `${newmember.presence.game && newmember.presence.game.streaming ? 'Streaming' : 'Playing'}` + '<strong>' + newmember.presence.game.name.replace(/</ig, '&lt;').replace(/>/ig, '&gt;') + '</strong></span>')
+						users[a].childNodes[0].childNodes[0].childNodes[0].className = 'status ' + (newmember.presence.game && newmember.presence.game.streaming ? "streaming" : newmember.presence.status)
+					}
+				}
+			}
+			if($(`.members [data-id*="${newmember.id}"]`)[0] && type === "presence"){
+				var status = 'online';
+				var user = newmember;
+				var game = '';
+				if (bot.users.has(newmember.id)) {
+					status = newmember.presence.status;
+					if (newmember.presence.game !== null) game = '<div class="channel-activity">' + `<span>${newmember.presence.game && newmember.presence.game.name && newmember.presence.game.streaming ? 'Streaming' : 'Playing'}<strong>` + newmember.presence.game.name.replace(/</ig, '&lt;').replace(/>/ig, '&gt;') + '</strong></span></div>'
+				}
+				if (status === null || status === undefined) status = 'offline';
+				var avatar = 'https://cdn.discordapp.com/avatars/' + newmember.id + '/' + newmember.avatar + '.png'
+				if (newmember.avatar === null) avatar = 'https://discordapp.com/assets/' + avatarHashes[user.id % avatarHashes.length] + '.png'
+				$(`.members [data-id*="${newmember.id}"] .status`)[0].className = 'status ' + (newmember.presence.game && newmember.presence.game.streaming ? "streaming" : newmember.presence.status);
+				$(`.members [data-id*="${newmember.id}"] .member-user`).html(newmember.username.replace(/</ig, '&lt;').replace(/>/ig, '&gt;') + (newmember.recipient.bot ? '<p class="bot-tag">BOT</p>' : '') + game);
+				$(`.members [data-id*="${newmember.id}"] .member-user`)[0].className = 'member-user' + (game !== '' ? '' : ' no-status');
+				$(`.members [data-id*="${newmember.id}"]`)[0].className = 'member' + (status === 'offline' ? ' offline-member' : '');
+				if(!member.guild.large && status === 'offline' && !$('.offline-members-wrap [data-id*="${newmember.id}"]')[0]){
+					$('.offline-members-wrap').append('<div class="member"><a data-id="' + user.id + '" onclick="App.switchTo.dmChannel(\'' + user.id + '\')" draggable="false"><div style="background-image: url(\'' + avatar + '\')" class="avatar-small-dm"></div><div class="member-user no-status" ' + (member && member.colorRole ? 'style="opacity:1;color:' + member.colorRole.hexColor + ';"' : '') + '>' + member.displayName.replace(/</ig, '&lt;').replace(/>/ig, '&gt;') + (member.bot ? '<p class="bot-tag">BOT</p>' : '') + '</div></a></div>');
+				}else{
+					$('.offline-members-wrap [data-id*="${newmember.id}"]').remove();
+				}
+			}
+			if(newmember.id === bot.user.id){
+				if(newmember.presence.game){
+					$('#status-game').val(newmember.presence.game.name);
+					$('#status-url').val(newmember.presence.game.url);
+				};
+				$('.account-details .username').html(newmember.username.replace(/</ig, '&lt;').replace(/>/ig, '&gt;') + (newmember.bot ? '<span class="bot-tag">BOT</span>' : ''));
+				$(`.account .avatar-small .status`)[0].className = "status " + (newmember.presence.game && newmember.presence.game.streaming ? "streaming" : newmember.presence.status);
+			}
+		},
+		loadMoreMessages: function(channelid){
+			let channel = bot.channels.get(channelid);
+			let firstFoundMessageID = channel.messages.array()[0].id;
+			channel.fetchMessages({before:firstFoundMessageID}).then((msgs) => {
+				$('.messages-container .has-more').remove();
+				let lastHeight = $('.messages-container')[0].scrollHeight;
+				let lastTop = $('.messages-container')[0].scrollTop;
+				let otherMessages = $('.messages-container')[0].innerHTML;
+				$('.messages-container').empty();
+				$('.messages-container').append(`<div class="has-more" onclick="App.payloadManager.loadMoreMessages('${channelid}')">LOAD MORE MESSAGES</div>`)
+				var msg2 = msgs.array();
+				msg2.reverse();
+				for (var msg in msg2) {
+					App.payloadManager.messageCreate(msg2[msg]);
+				}
+				$('.messages-container').append(otherMessages);
+				$('.messages-container').scrollTop(($('.messages-container')[0].scrollHeight-lastHeight)+lastTop);
 			});
 		}
 	},
@@ -460,11 +751,11 @@ let App = {
 					$(".messages-container")[0].scrollTop = $(".messages-container")[0].scrollHeight;
 					$('#textarea').val('');
 				}
-			})
+			});
 			$('.file-input').click(function() {
 				if(App.disableUploading) return;
 				$('#file-input').click();
-			})
+			});
 			document.getElementById('file-input').addEventListener("change", function() {
 				if(App.disableUploading) return;
 				let filelist = document.getElementById('file-input').files;
@@ -527,16 +818,70 @@ let App = {
 				$('.title-wrap').empty()
 				$('title').text(`${bot.channels.get(id).type === "dm" ? "@" : "#"}${name} - Lightcord`)
 				$('.title-wrap').append(`<div class="title"><span class="channel${bot.channels.get(id).type === "dm" ? " dm" : ""}">${name}</span></div>`)
-				$('.messages-container').empty()
+				$('.messages-container').empty();
+				$('.messages-container').append(`<div class="has-more" onclick="App.payloadManager.loadMoreMessages('${id}')">LOAD MORE MESSAGES</div>`);
 				var msg2 = msgs.array();
 				msg2.reverse();
 				for (var msg in msg2) {
 					App.payloadManager.messageCreate(msg2[msg]);
 				}
 				$(".messages-container")[0].scrollTop = $(".messages-container")[0].scrollHeight;
+				let channel = bot.channels.get(id);
+
+				$("#textarea").removeAttr('disabled');
+				$(".textarea-inner").removeClass('disabled');
+				$(".channel-textarea-upload").show();
+				App.disableUploading = false;
+				if(channel.type !== "dm"){
+					if(!channel.permissionsFor(bot.user).hasPermission("SEND_MESSAGES")){
+						$("#textarea").attr('disabled','false');
+						document.getElementById('textarea').placeholder = 'You do not have permission to send messages in this channel.'
+						$(".textarea-inner").addClass('disabled');
+						$(".channel-textarea-upload").hide();
+						App.disableUploading = true;
+					}
+					if(!channel.permissionsFor(bot.user).hasPermission("ATTACH_FILES")){
+						$(".channel-textarea-upload").hide();
+						App.disableUploading = true;
+					}
+				}
+
+				$('.members-wrap').addClass('dm');
+				if(channel.type === "dm") return;
+				$('.members').empty();
+				let roles = [];
+				channel.guild.roles.array().filter(role=>role.name==="@everyone"||role.hoist).map(role=>roles.push(role));
+				roles.sort((a,b)=>a.position-b.position).reverse().map(role=>{
+					$('.members').append(`<div class="role-wrap" data-id="${role.id}"><h4>${role.name!=="@everyone" ? role.name.toUpperCase() : "ONLINE"} - ${role.members.filter(m=>m.user.presence.status!=='offline').size}</h4></div>`)
+					role.members.array().sort((a,b)=>a.displayName>b.displayName).filter(u=>channel.members.has(u.id)).map(member=>{
+						let user = member.user;
+						if (!$(`.members [data-id*="${user.id}"]`)[0] && channel.members.has(user.id)) {
+							var status = 'online'
+							var game = ''
+							status = user.presence.status
+							if (user.presence.game !== null) game = '<div class="channel-activity">' + `<span>${user.presence.game && user.presence.game.streaming ? 'Streaming' : 'Playing'}<strong>` + (user.presence.game.name && user.presence.game ? user.presence.game.name.replace(/</ig, '&lt;').replace(/>/ig, '&gt;') : "") + '</strong></span></div>'
+							if (status === null || status === undefined) status = 'offline'
+							var avatar = 'https://cdn.discordapp.com/avatars/' + user.id + '/' + user.avatar + '.png'
+							if (user.avatar === null) avatar = 'https://discordapp.com/assets/' + avatarHashes[user.id % avatarHashes.length] + '.png'
+							$('.role-wrap[data-id*="'+role.id+'"]').append('<div class="member' + (status === 'offline' ? ' offline-member' : '') + '"><a data-id="' + user.id + '" onclick="App.switchTo.dmChannel(\'' + user.id + '\')" draggable="false"><div style="background-image: url(\'' + avatar + '\')" class="avatar-small-dm"><div class="status ' + (user.presence.game && user.presence.game.streaming ? "streaming" : user.presence.status) + '"></div></div><div class="member-user'  + (game !== '' ? '' : ' no-status') +'" ' + (member && member.colorRole ? 'style="opacity:1;color:' + member.colorRole.hexColor + ';"' : '') + '>' + member.displayName.replace(/</ig, '&lt;').replace(/>/ig, '&gt;') + (member.bot ? '<p class="bot-tag">BOT</p>' : '') + game + '</div></a></div>')
+						}
+					});
+				});
+				$('.members').append(`<div class="role-wrap offline-members-wrap"><h4>OFFLINE - ${channel.members.filter(m=>m.user.presence.status==='offline').size}</h4></div>`)
+				if(!channel.guild.large) channel.members.array().sort((a,b)=>a.displayName>b.displayName).filter(u=>channel.members.has(u.id)).map(member=>{
+					let user = member.user;
+					var avatar = 'https://cdn.discordapp.com/avatars/' + user.id + '/' + user.avatar + '.png'
+					if (user.avatar === null) avatar = 'https://discordapp.com/assets/' + avatarHashes[user.id % avatarHashes.length] + '.png'
+					if(user.presence.status === 'offline'){
+						$('.offline-members-wrap').append('<div class="member"><a data-id="' + user.id + '" onclick="App.switchTo.dmChannel(\'' + user.id + '\')" draggable="false"><div style="background-image: url(\'' + avatar + '\')" class="avatar-small-dm"></div><div class="member-user no-status" ' + (member && member.colorRole ? 'style="opacity:1;color:' + member.colorRole.hexColor + ';"' : '') + '>' + member.displayName.replace(/</ig, '&lt;').replace(/>/ig, '&gt;') + (member.bot ? '<p class="bot-tag">BOT</p>' : '') + '</div></a></div>')
+					}
+				});
+				$('.members-wrap').removeClass('dm');
 			});
 		},
 		DMs: function(channelsonly){
+			$('.members').empty();
+			$('.members-wrap').addClass('dm');
 			var dms = bot.channels;
 			if(!channelsonly) $('.title-wrap').empty()
 			if(!channelsonly) $(".messages-container").empty();
@@ -555,17 +900,22 @@ let App = {
 					var game = ''
 					if (bot.users.has(d[i].recipient.id)) {
 						status = d[i].recipient.presence.status
-						if (d[i].recipient.presence.game !== null) game = '<div class="channel-activity"><span>Playing<strong>' + d[i].recipient.presence.game.name + '</strong></span></div>'
+						if (d[i].recipient.presence.game !== null) game = '<div class="channel-activity">' + `<span>${d[i].recipient.presence.game && d[i].recipient.presence.game.name && d[i].recipient.presence.game.streaming ? 'Streaming' : 'Playing'}<strong>` + d[i].recipient.presence.game.name.replace(/</ig, '&lt;').replace(/>/ig, '&gt;') + '</strong></span></div>'
 					}
-					if (status === null || status === undefined) status = 'offline'
+					if (status === null || status === undefined) status = 'offline';
 					var avatar = 'https://cdn.discordapp.com/avatars/' + d[i].recipient.id + '/' + d[i].recipient.avatar + '.png'
 					if (d[i].recipient.avatar === null) avatar = 'https://discordapp.com/assets/' + avatarHashes[d[i].recipient.id % avatarHashes.length] + '.png'
-					$('.channels').append('<div class="channel dm"><a data-dmuid="' + d[i].recipient.id + '" onclick="App.switchTo.channel(\'' + d[i].id + '\', \'' + d[i].recipient.username.replace(/</ig, '&lt;').replace(/>/ig, '&gt;') + '\')" draggable="false"><div style="background-image: url(\'' + avatar + '\')" class="avatar-small-dm"><div class="status ' + status + '"></div></div><div class="dm-user ' + (game !== '' ? '' : 'no-status') +'">' + d[i].recipient.username + game + '</div></a><button class="close" onclick="App.payloadManager.deleteDmChannel(\'' + d[i].id + '\', \'' + d[i].recipient.id + '\')"></button></div>')
+					$('.channels').append('<div class="channel dm"><a data-dmuid="' + d[i].recipient.id + '" onclick="App.switchTo.channel(\'' + d[i].id + '\', \'' + d[i].recipient.username + '\')" draggable="false"><div style="background-image: url(\'' + avatar + '\')" class="avatar-small-dm"><div class="status ' + (d[i].recipient.presence.game && d[i].recipient.presence.game.streaming ? "streaming" : d[i].recipient.presence.status) + '"></div></div><div class="dm-user ' + (game !== '' ? '' : 'no-status') +'">' + d[i].recipient.username.replace(/</ig, '&lt;').replace(/>/ig, '&gt;') + (d[i].recipient.bot ? '<p class="bot-tag">BOT</p>' : '') + game + '</div></a><button class="close" onclick="App.payloadManager.deleteDmChannel(\'' + d[i].id + '\', \'' + d[i].recipient.id + '\')"></button></div>')
 				}
 			}
 		},
 		dmChannel: function(id){
-			App.switchTo.DMs()
+			if(id === bot.user.id){
+				App.deploy.errorPrompt("You can't directly message yourself!");
+				return;
+			}
+			App.switchTo.DMs();
+			App.switchTo.chatMode();
 			let user = bot.users.get(id);
 			var dms = bot.channels.filter(c=>c.type==="dm");
 			if (!dms.has(id)) {
@@ -589,13 +939,13 @@ let App = {
 	deploy: {
 		clearModal: function(){displayHandler.hideModal();$('.modal-inner').empty();},
 		quickSwitcher: function(){
-			let dom = `<div class="quickswitcher-container"><div class="quickswitcher"><input type="text" class="big-input" oninput="App.quickSwitcher.parseSearch()" placeholder="Where would you like to go today?" value=""><div class="quickswitcher-scroller app-scroller empty"><div class="quickswitcher-empty-state-note">Can’t seem to find what you’re looking for? Maybe you want to go to Direct Messages.</div><div class="result" data-id="144614724112220161" onclick="App.deploy.clearModal();App.switchTo.DMs()"><div class="icon" style="background-size: 75%;background-position: 50%;background-repeat: no-repeat;background-image: url(&quot;https://discordapp.com/assets/89576a4bb71f927eb20e8aef987b499b.svg&quot;); border-radius: 50%; background-color: #222"></div><span>Direct Messages</span></div></div></div></div>`
+			let dom = `<div class="quickswitcher-container"><div class="quickswitcher"><input type="text" class="big-input" oninput="App.quickSwitcher.parseSearch()" placeholder="Where would you like to go today?" value=""><div class="quickswitcher-scroller app-scroller empty"><div class="quickswitcher-empty-state-note">Can’t seem to find what you’re looking for? Maybe you want to go to Direct Messages.</div><div class="result" data-id="144614724112220161" onclick="App.deploy.clearModal();App.switchTo.DMs()"><div class="icon" style="background-size: 75%;background-position: 50%;background-repeat: no-repeat;background-image: url(&quot;https://discordapp.com/assets/89576a4bb71f927eb20e8aef987b499b.svg&quot;); border-radius: 50%; background-color: #222"></div><span>Direct Messages</span></div></div></div></div>`;
 			$('.modal-inner').append(dom);
 			displayHandler.showModal();
 			$(".quickswitcher .big-input")[0].focus();
 		},
 		filePrompt: function(){
-			let dom = `<div class="upload-container"><div class="upload-outline"><div class="upload-block"><div class="upload-header"><div class="description"><div class="filename"></div><div class="filesize"></div></div></div><input class="upload-input" placeholder="Insert a comment... (Optional)"></div></div><div class="upload-footer"><button class="button" onclick="App.filePrompt.cancel()"><span>Cancel</span></button><button class="button-primary" onclick="App.filePrompt.upload()"><span>Upload</span></button></div></div>`
+			let dom = `<div class="upload-container"><div class="upload-outline"><div class="upload-block"><div class="upload-header"><div class="description"><div class="filename"></div><div class="filesize"></div></div></div><input class="upload-input" placeholder="Insert a comment... (Optional)"></div></div><div class="upload-footer"><button class="button" onclick="App.filePrompt.cancel()"><span>Cancel</span></button><button class="button-primary" onclick="App.filePrompt.upload()"><span>Upload</span></button></div></div>`;
 			$('.modal-inner').append(dom);
 			displayHandler.showModal();
 			$(".upload-input")[0].focus();
@@ -603,7 +953,30 @@ let App = {
 				var code = (e.keyCode ? e.keyCode : e.which);
 				if (code === 13 && !e.shiftKey) App.filePrompt.upload();
 			});
+		},
+		errorPrompt: function(text){
+			let dom = `<div class="error-outline" onclick="App.deploy.clearModal()"><div class="error-block"><h1>${Util.random(["Oops!","Yikes!","Nope!"])}</h1><p>${text}</p></div></div>`;
+			$('.modal-inner').append(dom);
+			displayHandler.showModal();
+		},
+		maskedLink: function(url){
+			if(JSON.parse(localStorage.trustedDomains).includes(url.replace(/(.+):\/\//, "").split("/")[0])){
+				window.open(url, '_blank', '');
+				return;
+			}
+			let dom = `<div class="masked-link"><h4>Hold Up</h4><p>Links are spoopy. This link goes to <strong>${url}</strong>. Are you sure you want to go there?</p><div class="actions"><a class="cancel" onclick="App.deploy.clearModal()">Cancel</a><a class="trust" onclick="App.maskedLinkOkayed('${url}')">Yep!</a></div><a class="trust-domain" onclick="App.maskedLinkOkayed('${url}', true);">Trust this Domain</a></div>`;
+			$('.modal-inner').append(dom);
+			displayHandler.showModal();
 		}
+	},
+	maskedLinkOkayed: function(url, trust){
+		if(trust && !JSON.parse(localStorage.trustedDomains).includes(url.replace(/(.+):\/\//, "").split("/")[0])){
+			td = JSON.parse(localStorage.trustedDomains);
+			td.push(url.replace(/(.+):\/\//, "").split("/")[0]);
+			localStorage.trustedDomains = JSON.stringify(td);
+		}
+		window.open(url, '_blank', '');
+		App.deploy.clearModal();
 	},
 	filePrompt: {
 		currentFile: null,
@@ -724,12 +1097,12 @@ let App = {
 				try{
 					if(res.region){
 						//$(".quickswitcher-scroller").append(`<div class="result" data-id="${res.id}" onclick="App.deploy.clearModal();App.switchTo.guild('${res.id}')"><div class="icon" style="background-image: url(&quot;https://cdn.discordapp.com/icons/${res.id}/${res.icon}.png&quot;);"></div><span>${res.name.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span></div>`);
-						found.guilds.push(`<div class="result" data-id="${res.id}" onclick="App.deploy.clearModal();App.switchTo.guild('${res.id}')"><div class="icon" style="background-image: url(&quot;https://cdn.discordapp.com/icons/${res.id}/${res.icon}.png&quot;);"></div><span>${res.name.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span></div>`);
+						found.guilds.push(`<div class="result" data-id="${res.id}" onclick="App.deploy.clearModal();App.switchTo.guild('${res.id}')"><div class="icon" ${res.icon ? `style="background-image: url(&quot;https://cdn.discordapp.com/icons/${res.id}/${res.icon}.png&quot;);"` : ''}></div><span>${res.name.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span></div>`);
 					}else if(res.bot !== undefined){
-						let avatar_url = res.avatar ? (res.avatar.startsWith("a_") ? `https://cdn.discordapp.com/avatars/${res.id}/${res.avatar}.gif?size=1024` : `https://cdn.discordapp.com/avatars/${res.id}/${res.avatar}.png?size=1024`) : `https://discordapp.com/assets/${avatarHashes[res.discriminator % avatarHashes.length]}.png`;
-						found.users.push(`<div class="result" data-id="${res.id}" onclick="App.deploy.clearModal();App.switchTo.chatMode();App.switchTo.dmChannel('${res.id}')"><div class="icon" style="background-image: url(&quot;${avatar_url}&quot;); border-radius: 50%;"></div><span>${res.username.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</span><span class="discriminator">#${res.discriminator}</span></div>`);
+						let avatar_url = res.avatar ? (res.avatar.startsWith("a_") ? `https://cdn.discordapp.com/avatars/${res.id}/${res.avatar}.gif` : `https://cdn.discordapp.com/avatars/${res.id}/${res.avatar}.png`) : `https://discordapp.com/assets/${avatarHashes[res.discriminator % avatarHashes.length]}.png`;
+						found.users.push(`<div class="result" data-id="${res.id}" onclick="App.deploy.clearModal();App.switchTo.dmChannel('${res.id}')"><div class="icon" style="background-image: url(&quot;${avatar_url}&quot;); border-radius: 50%;"></div><span>${res.username.replace(/</g, "&lt;").replace(/>/g, "&gt;")}${res.bot ? '<span class="bot-tag">BOT</span>' : ''}</span><span class="discriminator">#${res.discriminator}</span></div>`);
 					}else{
-						if(res.type === "dm") return;
+						if(res.type === "dm" || res.type === "voice") return;
 						found.channels.push(`<div class="result" data-id="${res.id}" onclick="App.deploy.clearModal();App.switchTo.chatMode();App.switchTo.guild('${res.guild.id}');App.switchTo.channel('${res.id}', '${res.name}')"><div class="icon hashtag"></div><span>${res.name}</span><span class="discriminator">${res.guild.name}</span></div>`);
 					}
 				}catch(e){
@@ -752,5 +1125,39 @@ let App = {
 				found.users.map(v=>$(".quickswitcher-scroller").append(v));
 			}
 		}
+	},
+	changeStatus: {
+		checkURL: function(){
+			if(!($('#status-url').val() === "" || $('#status-url').val().startsWith("https://twitch.tv/"))) App.deploy.errorPrompt("Invalid Twitch URL!");
+			return $('#status-url').val() === "" || $('#status-url').val().startsWith("https://twitch.tv/");
+		},
+		online: function(){
+			if(!App.changeStatus.checkURL()) return;
+			bot.user.setStatus('online').catch(e=>App.deploy.errorPrompt(e.toString()));
+			App.changeStatus.game();
+		},
+		idle: function(){
+			if(!App.changeStatus.checkURL()) return;
+			bot.user.setStatus('idle').catch(e=>App.deploy.errorPrompt(e.toString()));
+			App.changeStatus.game();
+		},
+		dnd: function(){
+			if(!App.changeStatus.checkURL()) return;
+			bot.user.setStatus('dnd').catch(e=>App.deploy.errorPrompt(e.toString()));
+			App.changeStatus.game();
+		},
+		game: function(){
+			if(!App.changeStatus.checkURL()) return;
+			bot.user.setGame($('#status-game').val(), Util.empToNil($('#status-url').val())).catch(e=>App.deploy.errorPrompt(e.toString()));
+		}
+	}
+}
+
+let Util = {
+	random: function(array){
+		return array[Math.floor(Math.random() * ((array.length-1) - 0 + 1)) + 0];
+	},
+	empToNil: function(val){
+		return val === "" ? null : val;
 	}
 }
